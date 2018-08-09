@@ -1,0 +1,60 @@
+resources:
+- name: repo
+  type: git
+  source:
+    uri: https://github.com/making/hello-nodejs-s3.git
+    branch: master
+- name: minio
+  type: docker-image
+  source:
+    repository: minio/minio
+    tag: RELEASE.2018-08-02T23-11-36Z
+
+jobs:
+- name: unit-test
+  plan:
+    - aggregate:
+      - get: repo
+        trigger: true
+      - get: minio
+    - task: npm-test
+      params:
+        AWS_ACCESS_KEY_ID: keykeykey
+        AWS_SECRET_ACCESS_KEY: secretsecret
+        S3_ENDPOINT_URL: http://localhost:9000
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: node
+            tag: 8
+        inputs:
+        - name: repo
+        - name: minio
+        caches:
+        - path: repo/node_modules
+        run:
+          path: bash
+          args:
+          - -c
+          - |
+            set -eo pipefail 
+
+            export MINIO_ACCESS_KEY=${AWS_ACCESS_KEY_ID}
+            export MINIO_SECRET_KEY=${AWS_SECRET_ACCESS_KEY}
+            ./minio/rootfs/usr/bin/minio server /data &
+            MINIO_PID=$!
+            
+            cd repo
+            npm install
+            npm start &
+            APP_PID=$!
+            
+            sleep 2
+            STATUS_CODE=$(curl -o /dev/null -w '%{http_code}\n' -v -s localhost:3000/buckets )
+            kill ${APP_PID} ${MINIO_PID}
+            if [ "${STATUS_CODE}" != "200" ];then
+              exit 1;
+            fi
+
